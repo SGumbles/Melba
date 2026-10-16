@@ -1,7 +1,9 @@
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker};
 use std::thread::Thread;
+use std::time::Duration;
 
 struct ThreadWaker(Thread);
 
@@ -43,6 +45,62 @@ unsafe fn drop_waker(data: *const ()) {
     }
 }
 
+struct YieldOnce {
+    yielded: bool,
+}
+
+impl Future for YieldOnce {
+    type Output = ();
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.yielded {
+            Poll::Ready(())
+        } else {
+            self.yielded = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+}
+
+struct Sleep {
+    duration: Duration,
+    started: bool,
+    done: Arc<AtomicBool>,
+}
+
+impl Sleep {
+    fn new(duration: Duration) -> Self {
+        Sleep {
+            duration,
+            started: false,
+            done: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl Future for Sleep {
+    type Output = ();
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if self.done.load(Ordering::Acquire) {
+            return Poll::Ready(());
+        }
+
+        if !self.started {
+            self.started = true;
+
+            let done = Arc::clone(&self.done);
+            let waker = cx.waker().clone();
+            let duration = self.duration;
+            std::thread::spawn(move || {
+                std::thread::sleep(duration);
+                done.store(true, Ordering::Release);
+                waker.wake();
+            });
+        }
+        Poll::Pending
+    }
+}
+
 fn block_on<F: Future>(future: F) -> F::Output {
     let data = Arc::into_raw(Arc::new(ThreadWaker(std::thread::current())));
     let raw_waker = RawWaker::new(data.cast(), &VTABLE);
@@ -59,10 +117,8 @@ fn block_on<F: Future>(future: F) -> F::Output {
 
 fn main() {
     block_on(async {
-        println!("hey");
+        println!("Saying hi from before the yield!");
+        Sleep::new(Duration::from_millis(2000)).await;
+        println!("Saying hi from after the yield!");
     });
-    // for _ in 0..100 {
-    //     let number = rand::random_range(2..=50);
-    //     println!("{number}");
-    // }
 }
