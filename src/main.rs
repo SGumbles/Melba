@@ -1,13 +1,15 @@
 use std::{
+    collections::VecDeque,
     future::Future,
     hint::black_box,
     pin::Pin,
+    process::exit,
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Wake, Waker},
-    thread::Thread,
+    thread::{self, JoinHandle, Thread},
     time::{Duration, Instant},
 };
 
@@ -106,45 +108,93 @@ fn block_on<F: Future>(future: F) -> F::Output {
     }
 }
 
+#[derive(PartialEq)]
+#[repr(u8)]
+enum TaskState {
+    WaitingToBeRun = 0,
+    Running = 1,
+    WaitingForWake = 2,
+}
+
 struct Task {
-    future: Pin<Box<dyn Future<Output = ()>>>,
+    future: Pin<Box<dyn Future<Output = ()> + Send>>,
+    state: AtomicU8,
+}
+
+impl Task {
+    fn new(future: impl Future<Output = ()> + 'static + Send) -> Self {
+        Task {
+            future: Box::pin(future),
+            state: AtomicU8::new(TaskState::WaitingToBeRun as u8),
+        }
+    }
+    fn set_state(&self, state: TaskState) {
+        self.state.store(state as u8, Ordering::Release);
+    }
+    fn get_state(&self) -> TaskState {
+        unsafe { std::mem::transmute::<u8, TaskState>(self.state.load(Ordering::Acquire)) }
+    }
 }
 
 struct Executor {
-    tasks: Vec<Task>,
+    tasks: Arc<Mutex<VecDeque<Task>>>,
+    max_worker_threads: u32,
+    little_worker_bees: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Executor {
     fn new() -> Self {
-        Executor { tasks: Vec::new() }
+        Executor {
+            tasks: Arc::new(Mutex::new(VecDeque::new())),
+            max_worker_threads: 4,
+            little_worker_bees: Mutex::new(Vec::new()),
+        }
     }
 
-    fn add_task(&mut self, future: impl Future<Output = ()> + 'static) {
-        self.tasks.push(Task {
-            future: Box::pin(future),
-        });
+    fn add_task(&self, future: impl Future<Output = ()> + 'static + Send) {
+        self.tasks.lock().unwrap().push_back(Task::new(future));
     }
 
-    //     fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
-    //         let future = Box::pin(future);
-    //         let task = Task |a:u32,b:u32| -> bool{a>b};
-    //         self.tasks.push(task);
-    //     }
-    //
-    //     fn run(&mut self) {
-    //         while let Some(task) = self.tasks.pop() {
-    //             let future = task.future;
-    //             let waker = task.waker;
-    //             let mut context = Context::from_waker(&waker);
-    //             let mut future = Box::pin(future);
-    //             loop {
-    //                 match future.as_mut().poll(&mut context) {
-    //                     Poll::Pending => std::thread::park(),
-    //                     Poll::Ready(output) => return output,
-    //                 }
-    //             }
-    //         }
-    //     }
+    fn run(&self) {
+        self.little_worker_bees
+            .lock()
+            .unwrap()
+            .extend((0..self.max_worker_threads).map(|i| {
+                let tasks = self.tasks.clone();
+                thread::spawn(move || {
+                    let next_task = tasks
+                        .lock()
+                        .unwrap()
+                        .pop_front_if(|t| t.get_state() == TaskState::WaitingToBeRun);
+                    match next_task {
+                        Some(t) => {
+                            todo!("Actuall run the damn")
+                        }
+                        None => {
+                            println!("BEEP BEEP Parking a worker BEE #{}", i + 1);
+                            std::thread::park();
+                        }
+                    }
+                })
+            }));
+        self.little_worker_bees
+            .lock()
+            .unwrap()
+            .drain(..)
+            .for_each(|t| t.join().unwrap());
+        // while let Some(task) = self.tasks.pop() {
+        //     let future = task.future;
+        //     let waker = task.waker;
+        //     let mut context = Context::from_waker(&waker);
+        //     let mut future = Box::pin(future);
+        //     loop {
+        //         match future.as_mut().poll(&mut context) {
+        //             Poll::Pending => std::thread::park(),
+        //             Poll::Ready(output) => return output,
+        //         }
+        //     }
+        // }
+    }
 }
 
 fn work(duration: Duration) {
@@ -163,38 +213,63 @@ fn work(duration: Duration) {
     black_box(state); // <-- keeps the final value "used"
 }
 
+fn sleep(duration: Duration) -> impl Future {
+    Sleep::new(duration)
+}
+
+async fn spawn_more_work(exec: Arc<Executor>) {
+    exec.add_task(async {
+        println!("heh.. workin' hard or hardly workin'?");
+        work(Duration::from_secs(1));
+        sleep(Duration::from_secs(1)).await;
+    });
+    println!("Sleeping after adding more work to the executor!");
+    sleep(Duration::from_secs(2)).await;
+}
+
 async fn big_work(exec: Arc<Executor>) {
     println!("OHH WE GOT THE BIG WORK AND SLEEP NOW!");
     println!("WORK WORK WORK!");
     work(Duration::from_secs(10));
     println!("SLEEP SLEEP SLEEP!");
     sleep(Duration::from_secs(15)).await;
+    if rand::random_ratio(1, 5) {
+        println!("GWAAAAAA!!! WE HAVE HIT THE BIG WORK AGAIN!!!");
+        spawn_more_work(exec).await;
+    }
 }
 
 fn main() {
-    let mut rng = rand::rng();
-
     let executor = Arc::new(Executor::new());
+
+    executor.run();
+    println!("All done!");
+    exit(0);
 
     let work_dist = LogNormal::from_mean_cv(3000.0, 0.60).unwrap();
     let sleep_dist = LogNormal::from_mean_cv(5000.0, 0.80).unwrap();
 
-    for _ in 0..10 {
-        let exec = executor.clone();
+    for _ in 0..20 {
+        let exec: Arc<Executor> = executor.clone();
         executor.add_task(async move {
             loop {
-                let work_ms = work_dist.sample(&mut rng) as u64;
-                let sleep_ms = sleep_dist.sample(&mut rng) as u64;
-
+                let (work_ms, sleep_ms) = {
+                    let mut rng = rand::rng();
+                    (
+                        work_dist.sample(&mut rng) as u64,
+                        sleep_dist.sample(&mut rng) as u64,
+                    )
+                };
                 println!("I work all day for {work_ms} milliseconds...");
                 work(Duration::from_millis(work_ms));
                 println!("Now I sleep all night for {sleep_ms} milliseconds...");
                 sleep(Duration::from_millis(sleep_ms)).await;
 
                 if rand::random_ratio(1, 20) {
-                    big_work(exec).await;
+                    big_work(exec.clone()).await;
                 }
             }
         });
     }
+    executor.run();
 }
