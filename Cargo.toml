@@ -1,8 +1,18 @@
+[workspace]
+members = ["melba"]
+resolver = "3"
+
 [package]
-name = "smart"
+name = "melba-package"
 version = "0.1.0"
 edition = "2024"
+publish = false
 
 [dependencies]
+melba = { path = "melba" }
 rand = "0.10.3"
 rand_distr = "0.6.0"
+
+[[example]]
+name = "Big_Work"
+path = "examples/big_work.rs"
