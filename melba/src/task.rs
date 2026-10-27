@@ -6,25 +6,37 @@ use std::{
     time::Instant,
 };
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 pub(crate) enum TaskState {
     WaitingToBeRun,
     Sleeping { wake_time: Instant },
 }
 
 pub(crate) struct Task {
+    id: u32,
     future: RefCell<Pin<Box<dyn Future<Output = ()>>>>,
     state: Cell<TaskState>,
 }
 
 impl Task {
-    pub(crate) fn new(future: impl Future<Output = ()> + 'static) -> Self {
+    pub(crate) fn new(id: u32, future: impl Future<Output = ()> + 'static) -> Self {
         Task {
+            id,
             future: RefCell::new(Box::pin(future)),
             state: Cell::new(TaskState::WaitingToBeRun),
         }
     }
+    pub(crate) fn id(&self) -> u32 {
+        self.id
+    }
     pub(crate) fn set_state(&self, state: TaskState) {
+        #[cfg(feature = "dev-logs")]
+        log::trace!(
+            "task {} state: {:?} -> {:?}",
+            self.id,
+            self.get_state(),
+            state
+        );
         self.state.set(state);
     }
     pub(crate) fn get_state(&self) -> TaskState {
@@ -39,6 +51,8 @@ impl Task {
     pub(crate) fn awaken(&self) {
         if let TaskState::Sleeping { wake_time } = self.get_state() {
             if std::time::Instant::now() > wake_time {
+                #[cfg(feature = "dev-logs")]
+                log::debug!("waking task {} (sleep expired)", self.id);
                 self.set_state(TaskState::WaitingToBeRun);
             }
         }

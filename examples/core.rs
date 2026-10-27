@@ -1,6 +1,8 @@
 use melba::{sleep, spawn};
 
 fn main() {
+    env_logger::init();
+
     spawn(async {
         let sleepy_time = std::time::Duration::from_millis(5000);
 

@@ -13,18 +13,21 @@ thread_local! {
 }
 
 pub fn spawn(future: impl Future<Output = ()> + 'static) {
+    #[cfg(feature = "dev-logs")]
+    log::debug!("spawning a task");
     CURRENT_EXECUTOR.with(|f| {
         f.borrow().add_task(future);
     });
 }
 
 pub fn sleep(duration: Duration) -> impl Future {
-    Sleep::new(
-        duration,
-        CURRENT_EXECUTOR.with(|f| {
-            f.borrow()
-                .get_currently_running_task()
-                .expect("No task is running?")
-        }),
-    )
+    #[cfg(feature = "dev-logs")]
+    log::trace!("creating sleep future for {:?}", duration);
+    let owning_task = CURRENT_EXECUTOR.with(|f| {
+        f.borrow()
+            .get_currently_running_task()
+            .expect("No task is running?")
+    });
+    let task_id = owning_task.upgrade().map(|t| t.id()).unwrap_or(0);
+    Sleep::new(duration, owning_task, task_id)
 }

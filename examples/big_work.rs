@@ -44,6 +44,8 @@ async fn big_work() {
 }
 
 fn main() {
+    env_logger::init();
+
     let work_dist = LogNormal::from_mean_cv(3000.0, 0.60).unwrap();
     let sleep_dist = LogNormal::from_mean_cv(5000.0, 0.80).unwrap();
 
