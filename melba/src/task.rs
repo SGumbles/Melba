@@ -1,31 +1,49 @@
-use std::{future::Future, pin::Pin, task::Context, time::Instant};
+use std::{
+    cell::{Cell, RefCell},
+    future::Future,
+    pin::Pin,
+    task::Context,
+    time::Instant,
+};
 
-#[derive(Copy, Clone)]
-enum TaskState {
+#[derive(Copy, Clone, PartialEq)]
+pub(crate) enum TaskState {
     WaitingToBeRun,
-    Running,
     Sleeping { wake_time: Instant },
 }
 
-pub struct Task {
-    future: Pin<Box<dyn Future<Output = ()> + Send>>,
-    state: TaskState,
+pub(crate) struct Task {
+    future: RefCell<Pin<Box<dyn Future<Output = ()>>>>,
+    state: Cell<TaskState>,
 }
 
 impl Task {
-    pub fn new(future: impl Future<Output = ()> + 'static + Send) -> Self {
+    pub(crate) fn new(future: impl Future<Output = ()> + 'static) -> Self {
         Task {
-            future: Box::pin(future),
-            state: TaskState::WaitingToBeRun,
+            future: RefCell::new(Box::pin(future)),
+            state: Cell::new(TaskState::WaitingToBeRun),
         }
     }
-    pub fn set_state(&mut self, state: TaskState) {
-        self.state = state;
+    pub(crate) fn set_state(&self, state: TaskState) {
+        self.state.set(state);
     }
-    pub fn get_state(&self) -> TaskState {
-        self.state
+    pub(crate) fn get_state(&self) -> TaskState {
+        self.state.get()
     }
-    pub fn poll(&mut self, ctx: &mut Context) -> core::task::Poll<()> {
-        self.future.as_mut().poll(ctx)
+    pub(crate) fn wake_time(&self) -> Option<Instant> {
+        match self.get_state() {
+            TaskState::Sleeping { wake_time } => Some(wake_time),
+            _ => None,
+        }
+    }
+    pub(crate) fn awaken(&self) {
+        if let TaskState::Sleeping { wake_time } = self.get_state() {
+            if std::time::Instant::now() > wake_time {
+                self.set_state(TaskState::WaitingToBeRun);
+            }
+        }
+    }
+    pub(crate) fn poll(&self, ctx: &mut Context) -> core::task::Poll<()> {
+        self.future.borrow_mut().as_mut().poll(ctx)
     }
 }
