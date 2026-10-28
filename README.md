@@ -1,8 +1,8 @@
+# melba
 > "Perfection is achieved, not when there is nothing more to add, but when there is nothing left to take away."
 >
 > — Antoine de Saint-Exupéry
 
-# melba
 
 A tiny single-threaded async runtime in Rust, named after a cat who spends most of her life asleep.
 
