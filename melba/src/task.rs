@@ -31,8 +31,8 @@ impl Task {
     }
     pub(crate) fn set_state(&self, state: TaskState) {
         #[cfg(feature = "dev-logs")]
-        log::trace!(
-            "task {} state: {:?} -> {:?}",
+        log::debug!(
+            "task {} : state: {:?} -> {:?}",
             self.id,
             self.get_state(),
             state
@@ -52,7 +52,7 @@ impl Task {
         if let TaskState::Sleeping { wake_time } = self.get_state() {
             if std::time::Instant::now() > wake_time {
                 #[cfg(feature = "dev-logs")]
-                log::debug!("waking task {} (sleep expired)", self.id);
+                log::debug!("task {} : waking (sleep expired)", self.id);
                 self.set_state(TaskState::WaitingToBeRun);
             }
         }

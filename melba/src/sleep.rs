@@ -9,7 +9,6 @@ use crate::task::Task;
 pub struct Sleep {
     duration: Duration,
     end: Option<Instant>,
-    started: bool,
     owning_task: Weak<Task>,
     // Only read by the `dev-logs` log statements, so it's dead when the feature is off.
     #[allow(dead_code)]
@@ -22,27 +21,28 @@ impl Sleep {
             duration,
             end: None,
             owning_task,
-            started: false,
             task_id,
         }
+    }
+    fn has_started(&self) -> bool {
+        self.end.is_some()
     }
 }
 
 impl Future for Sleep {
     type Output = ();
     fn poll(mut self: std::pin::Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.started && std::time::Instant::now() > self.end.unwrap() {
+        if self.has_started() && std::time::Instant::now() > self.end.unwrap() {
             #[cfg(feature = "dev-logs")]
-            log::debug!("task {} sleep future complete", self.task_id);
+            log::debug!("task {} : sleep future complete", self.task_id);
             return Poll::Ready(());
         } else {
-            if !self.started {
-                self.as_mut().started = true;
+            if !self.has_started() {
                 let end_time = std::time::Instant::now() + self.duration;
                 self.end = Some(end_time);
                 #[cfg(feature = "dev-logs")]
                 log::debug!(
-                    "task {} sleep future starting; waking at {:?}",
+                    "task {} : sleep future starting; waking at {:?}",
                     self.task_id,
                     end_time
                 );

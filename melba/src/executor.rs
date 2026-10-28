@@ -62,17 +62,20 @@ impl Executor {
                     log::debug!("no more ready tasks");
                     break;
                 };
-                *self.currently_running_task.borrow_mut() = Some(Rc::downgrade(&next_task));
+                self.currently_running_task
+                    .replace(Some(Rc::downgrade(&next_task)));
                 #[cfg(feature = "dev-logs")]
-                log::trace!("polling task {}", next_task.id());
-                match next_task.poll(&mut context) {
+                log::debug!("task {} : polling", next_task.id());
+                let run_result = next_task.poll(&mut context);
+                self.currently_running_task.replace(None);
+                match run_result {
                     std::task::Poll::Ready(_) => {
                         #[cfg(feature = "dev-logs")]
-                        log::debug!("task {} completed", next_task.id());
+                        log::debug!("task {} : completed", next_task.id());
                     }
                     std::task::Poll::Pending => {
                         #[cfg(feature = "dev-logs")]
-                        log::debug!("task {} parked (Pending)", next_task.id());
+                        log::debug!("task {} : parked (Pending)", next_task.id());
                         self.tasks.borrow_mut().push_back(next_task);
                     }
                 }
