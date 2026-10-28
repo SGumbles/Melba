@@ -32,7 +32,7 @@ impl Sleep {
 impl Future for Sleep {
     type Output = ();
     fn poll(mut self: std::pin::Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.has_started() && std::time::Instant::now() > self.end.unwrap() {
+        if self.has_started() && std::time::Instant::now() >= self.end.unwrap() {
             #[cfg(feature = "dev-logs")]
             log::debug!("task {} : sleep future complete", self.task_id);
             return Poll::Ready(());

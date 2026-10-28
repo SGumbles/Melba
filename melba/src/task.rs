@@ -18,6 +18,34 @@ pub(crate) struct Task {
     state: Cell<TaskState>,
 }
 
+impl Ord for Task {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let state1 = self.state.get();
+        let state2 = other.state.get();
+        match (state1, state2) {
+            (TaskState::WaitingToBeRun, TaskState::WaitingToBeRun) => std::cmp::Ordering::Equal,
+            (TaskState::WaitingToBeRun, TaskState::Sleeping { .. }) => std::cmp::Ordering::Less,
+            (TaskState::Sleeping { .. }, TaskState::WaitingToBeRun) => std::cmp::Ordering::Greater,
+            (TaskState::Sleeping { wake_time: w1 }, TaskState::Sleeping { wake_time: w2 }) => {
+                w1.cmp(&w2)
+            }
+        }
+    }
+}
+
+impl PartialEq for Task {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(&other).is_eq()
+    }
+}
+impl Eq for Task {}
+
+impl PartialOrd for Task {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Task {
     pub(crate) fn new(id: u32, future: impl Future<Output = ()> + 'static) -> Self {
         Task {
@@ -50,7 +78,7 @@ impl Task {
     }
     pub(crate) fn awaken(&self) {
         if let TaskState::Sleeping { wake_time } = self.get_state() {
-            if std::time::Instant::now() > wake_time {
+            if std::time::Instant::now() >= wake_time {
                 #[cfg(feature = "dev-logs")]
                 log::debug!("task {} : waking (sleep expired)", self.id);
                 self.set_state(TaskState::WaitingToBeRun);
